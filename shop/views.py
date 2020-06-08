@@ -59,6 +59,11 @@ class CheckoutView(View):
             return redirect('shop:cart')
 
 
+class PaymentView(View):
+    def get(self, *args, **kwargs):
+        return render(self.request, 'shop/payment.html')
+
+
 class ProductView(DetailView):
     model = Item
     template_name = 'shop/product.html'

@@ -19,4 +19,5 @@ urlpatterns = [
          remove_single_item_from_product, name='remove_single_item_from_product'),
     path('add-item-from-product/<slug:slug>/',
          add_single_item_from_product, name='add_single_item_from_product'),
+     path('payment/<payment_option>/', PaymentView.as_view(), name='payment')
 ]
