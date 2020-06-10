@@ -1,4 +1,5 @@
 from django.shortcuts import render, get_object_or_404, redirect
+from django.conf import settings
 from django.core.exceptions import ObjectDoesNotExist
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -6,8 +7,11 @@ from django.views.generic import ListView, DetailView, View
 from django.utils import timezone
 from django.contrib import messages
 
-from .models import Item, OrderItem, Order, BillingAddress
+from .models import Item, OrderItem, Order, BillingAddress, Payment
 from .forms import CheckoutForm
+
+import stripe
+stripe.api_key = settings.STRIPE_SECRET_KEY
 
 
 class IndexView(ListView):
@@ -50,10 +54,14 @@ class CheckoutView(View):
                 billing_address.save()
                 order.billing_address = billing_address
                 order.save()
-                # TODO: add redirect to the selected payment option
-                return redirect('shop:checkout')
-            messages.warning(self.request, 'Failed checkout')
-            return redirect('shop:checkout')
+
+                if payment_option == 'S':
+                    return redirect('shop:payment', payment_option='stripe')
+                elif payment_option == 'P':
+                    return redirect('shop:payment', payment_option='paypal')
+                else:
+                    messages.warning(self.request, 'Invalid payment option selected')
+                    return redirect('shop:checkout')
         except ObjectDoesNotExist:
             messages.error(self.request, 'You don\'t have an active order')
             return redirect('shop:cart')
@@ -61,7 +69,66 @@ class CheckoutView(View):
 
 class PaymentView(View):
     def get(self, *args, **kwargs):
-        return render(self.request, 'shop/payment.html')
+        order = Order.objects.get(user=self.request.user, ordered=False)
+        context = {
+            'order': order
+        }
+        return render(self.request, 'shop/payment.html', context)
+
+    def post(self, *args, **kwargs):
+        order = Order.objects.get(user=self.request.user, ordered=False)
+        token = self.request.POST.get('stripeToken')
+        amount = int(order.get_total() * 100)
+
+        try:
+            charge = stripe.Charge.create(
+                amount=amount,
+                currency='usd',
+                source=token,
+            )
+
+            # create the payment
+            payment = Payment()
+            payment.stripe_charge_id = charge['id']
+            payment.user = self.request.user
+            payment.amount = order.get_total()
+            payment.save()
+
+            # assign the payment to the order
+            order.ordered = True
+            order.payment = payment
+            order.save()
+
+            messages.success(self.request, 'Your order was successful!')
+            return redirect('/')
+
+        except stripe.error.CardError as e:
+            body = e.json_body
+            err = body.get('error', {})
+            messages.warning(self.request, f"{err.get('message')}")
+            return redirect('/')
+        except stripe.error.RateLimitError as e:
+            messages.warning(self.request, 'Rate limit error')
+            return redirect('/')
+        except stripe.error.InvalidRequestError as e:
+            messages.warning(self.request, 'InvalidRequestError')
+            return redirect('/')
+        except stripe.error.AuthenticationError as e:
+            messages.warning(self.request, 'AuthenticationError')
+            return redirect('/')
+        except stripe.error.APIConnectionError as e:
+            messages.warning(self.request, 'APIConnectionError')
+            return redirect('/')
+        except stripe.error.StripeError as e:
+            messages.warning(self.request, 'StripeError')
+            return redirect('/')
+        except Exception as e:
+            messages.warning(
+                self.request, 'A serious error occured')
+            return redirect('/')
+
+            # send an email to ourselves
+            pass
 
 
 class ProductView(DetailView):
